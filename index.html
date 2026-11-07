@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NCM → MP3 + SRT · 纯离线</title>
+<meta name="description" content="在浏览器里把网易云 .ncm 文件解密成 MP3/FLAC，并把歌词转成 SRT 字幕。文件不上传、不联网、断网可用。">
+<meta name="color-scheme" content="light">
+<style>
+  :root{
+    --bg:#F6F4EF;
+    --surface:#FFFFFF;
+    --ink:#191512;
+    --ink2:#5C544B;
+    --muted:#9A9186;
+    --line:#E5E0D6;
+    --accent:#C4342A;
+    --accent-soft:#FBEEEB;
+    --ok:#3AA14B;
+    --ok-soft:#EFF7F0;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:46px 20px 80px;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background:
+      radial-gradient(880px 440px at 8% -8%, rgba(196,52,42,.075), transparent 62%),
+      radial-gradient(720px 400px at 100% 2%, rgba(64,86,150,.05), transparent 60%);
+  }
+  main{position:relative; z-index:1; max-width:724px; margin:0 auto}
+
+  .eyebrow{
+    display:flex; align-items:center; gap:9px;
+    font-size:11.5px; letter-spacing:.15em; text-transform:uppercase;
+    color:var(--muted); font-weight:600;
+  }
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3.5px rgba(58,161,75,.14);flex:none}
+
+  h1{
+    margin:17px 0 0; font-size:clamp(32px,6vw,46px); line-height:1.08;
+    letter-spacing:-.042em; font-weight:800;
+  }
+  h1 .to{color:var(--accent); font-weight:400; margin:0 .1em}
+  h1 .plus{color:var(--muted); font-weight:300; font-size:.62em; margin:0 .16em 0 .1em; letter-spacing:0}
+
+  .lede{margin:16px 0 0; font-size:15.5px; line-height:1.72; color:var(--ink2); max-width:58ch; text-wrap:pretty}
+  .lede b{color:var(--ink); font-weight:650}
+
+  /* ---------- drop ---------- */
+  .drop{
+    margin-top:30px; border:1.6px dashed #D6CEBF; border-radius:18px;
+    background:rgba(255,255,255,.62);
+    padding:38px 24px; text-align:center; cursor:pointer;
+    transition:border-color .18s, background .18s, box-shadow .18s, padding .22s;
+    outline:none;
+  }
+  .drop:hover,.drop:focus-visible{border-color:#C9BEA9; background:#fff}
+  .drop.over{border-color:var(--accent); background:#fff; box-shadow:0 12px 34px -18px rgba(196,52,42,.34)}
+  .drop .ttl{font-size:15px; font-weight:640; margin:0}
+  .drop .sub{font-size:12.5px; color:var(--muted); margin:7px 0 0; line-height:1.65}
+  .drop .sub u{text-decoration-color:#CFC4B2; text-underline-offset:2px}
+
+  /* 有结果后收缩成一条 */
+  .drop.mini{
+    padding:12px 18px; display:flex; align-items:center; justify-content:center;
+    gap:8px; margin-top:22px; border-radius:12px;
+  }
+  .drop.mini .ttl{font-size:12.6px; font-weight:600; color:var(--ink2); display:flex; align-items:center; gap:7px}
+  .drop.mini .ttl::before{
+    content:"+"; font-size:15px; font-weight:400; line-height:1; color:var(--muted);
+    width:16px; height:16px; display:grid; place-items:center; flex:none;
+  }
+  .drop.mini .sub{display:none}
+
+  /* ---------- cards ---------- */
+  .list{margin-top:22px; display:flex; flex-direction:column; gap:12px}
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:16px;
+    padding:16px; animation:rise .28s cubic-bezier(.2,.7,.3,1) both;
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  .song{display:grid; grid-template-columns:64px minmax(0,1fr); gap:15px; align-items:center}
+  .cover{
+    width:64px;height:64px;border-radius:10px;background:#F1EDE6;overflow:hidden;
+    display:grid;place-items:center;color:#C5BBAC;font-size:22px;flex:none;
+  }
+  .cover img{width:100%;height:100%;object-fit:cover;display:block}
+  .meta{min-width:0}
+  .meta h2{
+    margin:0; font-size:15.5px; font-weight:680; letter-spacing:-.011em; line-height:1.35;
+    display:flex; align-items:center; gap:8px; min-width:0;
+  }
+  .meta h2 .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .meta .by{margin:5px 0 0; font-size:12.6px; color:var(--ink2); overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .meta .specs{margin:6px 0 0; font-size:11.4px; color:var(--muted); font-variant-numeric:tabular-nums}
+
+  .tag{
+    flex:none; font-size:10.5px; font-weight:700; letter-spacing:.04em;
+    padding:2.5px 7px; border-radius:5px; background:#F1EDE6; color:var(--ink2);
+    text-transform:uppercase;
+  }
+  .tag.hi{background:var(--ok-soft); color:#2C7A3A}
+
+  .acts{display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; align-items:center}
+  .btn{
+    font:inherit; font-size:12.8px; font-weight:620; border-radius:9px; padding:9px 15px;
+    cursor:pointer; transition:.15s; white-space:nowrap; border:1px solid var(--line);
+    background:#fff; color:var(--ink2);
+  }
+  .btn:hover{background:#FAF8F3; border-color:#D5CDC0; color:var(--ink)}
+  .btn.pri{background:var(--accent); border-color:var(--accent); color:#fff}
+  .btn.pri:hover{background:#A8271E; border-color:#A8271E; color:#fff}
+  .btn.ok{background:var(--ok-soft); border-color:#D8EBDC; color:#2C7A3A}
+  .btn.ok:hover{background:#E4F3E8; border-color:#CBE3D1; color:#256B32}
+  .btn:disabled{opacity:.42; cursor:default}
+
+  audio{width:100%; margin-top:12px; height:34px; border-radius:8px}
+
+  /* ---------- lyric panel ---------- */
+  .lyric-panel{margin-top:14px; border-top:1px solid var(--line); padding-top:14px}
+  .lyric-panel .lp-head{font-size:12px; color:var(--muted); line-height:1.6; margin:0 0 9px}
+  .lyric-panel .lp-head b{color:var(--ink2); font-weight:640}
+  .lyric-panel textarea{
+    width:100%; min-height:116px; resize:vertical; font:inherit; font-size:12px;
+    line-height:1.6; padding:10px 12px; border:1px solid var(--line); border-radius:9px;
+    background:#FCFAF6; color:var(--ink2); outline:none; font-family:ui-monospace,Consolas,monospace;
+  }
+  .lyric-panel textarea:focus{border-color:#CFC4B2; background:#fff}
+  .lyric-panel .lp-acts{display:flex; gap:8px; margin-top:9px; flex-wrap:wrap; align-items:center; gap:8px}
+  .lyric-panel .lp-note{font-size:11.5px; color:var(--muted); margin-left:auto}
+  .lyric-panel .lp-note.good{color:var(--ok); font-weight:600}
+  .lyric-panel .lp-note.bad{color:var(--accent)}
+  .srt-preview{
+    margin-top:10px; max-height:150px; overflow:auto; background:#FCFAF6;
+    border:1px solid var(--line); border-radius:9px; padding:10px 12px;
+    font-family:ui-monospace,Consolas,monospace; font-size:11.5px; line-height:1.62;
+    color:var(--ink2); white-space:pre-wrap; word-break:break-all;
+  }
+
+  .err{color:#9C3B2E; font-size:12.4px; line-height:1.6; margin-top:10px; background:#FFF7F5; border:1px solid #F0D6D0; padding:9px 12px; border-radius:9px}
+
+  /* ---------- cloud bridge ---------- */
+  .bridge{margin-top:38px; border-top:1px solid var(--line); padding-top:20px}
+  .bridge h3{margin:0 0 8px; font-size:13.5px; font-weight:660; letter-spacing:-.005em}
+  .bridge p{margin:0 0 12px; font-size:12.6px; line-height:1.75; color:var(--ink2); max-width:60ch}
+  .bridge a.go{
+    display:inline-flex; align-items:center; gap:7px; text-decoration:none;
+    font-size:12.8px; font-weight:640; color:#fff; background:var(--ink);
+    border-radius:9px; padding:10px 17px; transition:.15s;
+  }
+  .bridge a.go:hover{background:#000}
+  .bridge .addr{display:block; margin-top:9px; font-size:11.5px; color:var(--muted); font-family:ui-monospace,Consolas,monospace}
+
+  footer{margin-top:32px; font-size:11.6px; line-height:1.85; color:var(--muted)}
+  footer p{margin:0 0 5px}
+
+  .toast{
+    position:fixed; left:50%; bottom:26px; transform:translate(-50%,14px);
+    background:var(--ink); color:#fff; font-size:12.6px; padding:9px 18px;
+    border-radius:100px; opacity:0; pointer-events:none; transition:.24s; z-index:60;
+  }
+  .toast.on{opacity:1; transform:translate(-50%,0)}
+
+  .spin{width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;display:inline-block;vertical-align:-2px;margin-right:6px;animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  @media (max-width:560px){
+    body{padding:32px 15px 60px}
+    .drop{padding:30px 18px}
+    .song{grid-template-columns:52px minmax(0,1fr); gap:12px}
+    .cover{width:52px;height:52px;border-radius:9px;font-size:18px}
+    .meta h2{font-size:14.5px}
+    .btn{padding:8px 12px; font-size:12.3px}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms !important; transition-duration:.01ms !important}}
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow"><span class="dot"></span><span>纯离线 · 文件不上传</span></div>
+
+  <h1>NCM<span class="to">→</span>MP3<span class="plus">+</span>SRT</h1>
+
+  <p class="lede">
+    把网易云客户端的 <b>.ncm</b> 文件拖进来，在本机浏览器里当场解密成可播放的 <b>MP3 / FLAC</b>，
+    歌词能一起转成 <b>SRT 字幕</b>。页面不发任何网络请求，断网也能用。
+  </p>
+
+  <div class="drop" id="drop" tabindex="0" role="button" aria-label="选择或拖入 ncm 文件">
+    <p class="ttl">把 .ncm 文件拖到这里</p>
+    <p class="sub">或者 <u>点击选择文件</u> · 支持一次多个 · 同名 .lrc 一起拖入会自动配字幕</p>
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <div class="bridge">
+    <h3>想按歌曲 ID 直接下载？</h3>
+    <p>
+      那一步绕不开服务器 —— 要带你账号的会员权限去换音频地址，浏览器直连会被跨域拦掉。
+      所以按 ID 下载做成了联网版，会员歌填一次 Cookie 就能下。
+    </p>
+    <a class="go" id="cloudLink" href="#" target="_blank" rel="noopener">
+      打开联网版
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3.5 2.5h6v6M9.5 2.5L2.5 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <span class="addr" id="cloudAddr"></span>
+  </div>
+
+  <footer>
+    <p>本工具只处理你自己已经下载到本机的文件，音频与歌词版权归原作者及平台所有，请勿传播。</p>
+    <p>全部计算在你的浏览器里完成，页面没有任何外部资源（无 CDN、无字体、无统计），可离线保存为单个 HTML 使用。</p>
+  </footer>
+</main>
+
+<div class="toast" id="toast"></div>
+<input type="file" id="picker" accept=".ncm,.lrc" multiple hidden>
+
+<script id="ncm-core">
+/* ============================================================
+   NCM 解密核心 —— 纯 JS，无依赖，浏览器 / Node 通用
+   包含：AES-128-ECB 解密、keybox(RC4 变体)、NCM 容器解析
+   ============================================================ */
+
+/* ---------------- AES-128-ECB 解密 ---------------- */
+const SBOX = new Uint8Array([
+  0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+  0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+  0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+  0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+  0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+  0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+  0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+  0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+  0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+  0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+  0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+  0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+  0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+  0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+  0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+  0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
+]);
+const INV_SBOX = new Uint8Array(256);
+for (let i = 0; i < 256; i++) INV_SBOX[SBOX[i]] = i;
+
+function xtime(a) { return ((a << 1) ^ (a & 0x80 ? 0x1b : 0)) & 0xff; }
+function gmul(a, b) {
+  let r = 0;
+  while (b) { if (b & 1) r ^= a; a = xtime(a); b >>= 1; }
+  return r;
+}
+
+function expandKey(key) {
+  const w = new Uint8Array(176);
+  w.set(key);
+  let rcon = 1;
+  for (let i = 16; i < 176; i += 4) {
+    let t0 = w[i - 4], t1 = w[i - 3], t2 = w[i - 2], t3 = w[i - 1];
+    if (i % 16 === 0) {
+      const tmp = t0;
+      t0 = SBOX[t1] ^ rcon;
+      t1 = SBOX[t2];
+      t2 = SBOX[t3];
+      t3 = SBOX[tmp];
+      rcon = xtime(rcon);
+    }
+    w[i]     = w[i - 16] ^ t0;
+    w[i + 1] = w[i - 15] ^ t1;
+    w[i + 2] = w[i - 14] ^ t2;
+    w[i + 3] = w[i - 13] ^ t3;
+  }
+  return w;
+}
+
+function decryptBlock(w, s) {
+  // AddRoundKey(10)
+  for (let i = 0; i < 16; i++) s[i] ^= w[160 + i];
+  for (let round = 9; round >= 1; round--) {
+    // InvShiftRows
+    let t = s[13]; s[13] = s[9]; s[9] = s[5]; s[5] = s[1]; s[1] = t;
+    t = s[2]; s[2] = s[10]; s[10] = t;
+    t = s[6]; s[6] = s[14]; s[14] = t;
+    t = s[3]; s[3] = s[7]; s[7] = s[11]; s[11] = s[15]; s[15] = t;
+    // InvSubBytes
+    for (let i = 0; i < 16; i++) s[i] = INV_SBOX[s[i]];
+    // AddRoundKey(round)
+    const base = round * 16;
+    for (let i = 0; i < 16; i++) s[i] ^= w[base + i];
+    // InvMixColumns
+    for (let c = 0; c < 4; c++) {
+      const i = c * 4;
+      const a0 = s[i], a1 = s[i + 1], a2 = s[i + 2], a3 = s[i + 3];
+      s[i]     = gmul(a0, 14) ^ gmul(a1, 11) ^ gmul(a2, 13) ^ gmul(a3, 9);
+      s[i + 1] = gmul(a0, 9)  ^ gmul(a1, 14) ^ gmul(a2, 11) ^ gmul(a3, 13);
+      s[i + 2] = gmul(a0, 13) ^ gmul(a1, 9)  ^ gmul(a2, 14) ^ gmul(a3, 11);
+      s[i + 3] = gmul(a0, 11) ^ gmul(a1, 13) ^ gmul(a2, 9)  ^ gmul(a3, 14);
+    }
+  }
+  // 最后一轮：InvShiftRows + InvSubBytes + AddRoundKey(0)
+  let t = s[13]; s[13] = s[9]; s[9] = s[5]; s[5] = s[1]; s[1] = t;
+  t = s[2]; s[2] = s[10]; s[10] = t;
+  t = s[6]; s[6] = s[14]; s[14] = t;
+  t = s[3]; s[3] = s[7]; s[7] = s[11]; s[11] = s[15]; s[15] = t;
+  for (let i = 0; i < 16; i++) { s[i] = INV_SBOX[s[i]] ^ w[i]; }
+}
+
+/** AES-128-ECB 解密，自动去 PKCS7 padding */
+function aesEcbDecrypt(data, key) {
+  if (data.length % 16 !== 0) data = data.subarray(0, data.length - (data.length % 16));
+  const w = expandKey(key);
+  const out = new Uint8Array(data.length);
+  const block = new Uint8Array(16);
+  for (let off = 0; off < data.length; off += 16) {
+    block.set(data.subarray(off, off + 16));
+    decryptBlock(w, block);
+    out.set(block, off);
+  }
+  // 去 padding
+  const pad = out[out.length - 1];
+  if (pad >= 1 && pad <= 16) {
+    let ok = true;
+    for (let i = out.length - pad; i < out.length; i++) if (out[i] !== pad) { ok = false; break; }
+    if (ok) return out.subarray(0, out.length - pad);
+  }
+  return out;
+}
+
+/* ---------------- 常量 ---------------- */
+const CORE_KEY = new Uint8Array([0x68,0x7a,0x48,0x52,0x41,0x6d,0x73,0x6f,0x35,0x6b,0x49,0x6e,0x62,0x61,0x78,0x57]);
+const META_KEY = new Uint8Array([0x23,0x31,0x34,0x6c,0x6a,0x6b,0x5f,0x21,0x5c,0x5d,0x26,0x30,0x55,0x3c,0x27,0x28]);
+const META_PREFIX_LEN = 22; // "163 key(Don't modify):"
+
+const latin1 = (u8, from = 0, to = u8.length) => {
+  let s = '';
+  for (let i = from; i < to; i += 8192) {
+    s += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + 8192, to)));
+  }
+  return s;
+};
+
+/* ---------------- keybox（变种 RC4）---------------- */
+function buildKeyBox(key) {
+  const box = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) box[i] = i;
+  let lastByte = 0, kOff = 0;
+  for (let i = 0; i < 256; i++) {
+    const swap = box[i];
+    const c = (swap + lastByte + key[kOff]) & 0xff;
+    kOff = (kOff + 1) % key.length;
+    box[i] = box[c];
+    box[c] = swap;
+    lastByte = c;
+  }
+  return box;
+}
+
+/* ---------------- 格式嗅探 ---------------- */
+function sniffFormat(audio, metaFormat) {
+  const b = audio;
+  if (b.length > 4 && b[0] === 0x66 && b[1] === 0x4c && b[2] === 0x61 && b[3] === 0x43) return { ext: 'flac', mime: 'audio/flac' };
+  if (b.length > 3 && b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) return { ext: 'mp3', mime: 'audio/mpeg' };
+  if (b.length > 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return { ext: 'mp3', mime: 'audio/mpeg' };
+  if (b.length > 12 && latin1(b, 0, 4) === 'RIFF' && latin1(b, 8, 12) === 'WAVE') return { ext: 'wav', mime: 'audio/wav' };
+  if (b.length > 8 && latin1(b, 4, 8) === 'ftyp') return { ext: 'm4a', mime: 'audio/mp4' };
+  if (metaFormat === 'flac') return { ext: 'flac', mime: 'audio/flac' };
+  return { ext: 'mp3', mime: 'audio/mpeg' };
+}
+
+/* ---------------- 主流程 ---------------- */
+/**
+ * 解析 NCM 字节流
+ * @param {Uint8Array} buf
+ * @returns {{meta:object, cover:Uint8Array|null, audio:Uint8Array, ext:string, mime:string}}
+ */
+function parseNcm(input) {
+  // 拷贝一份：Buffer 的 slice 是共享视图，会污染调用方数据
+  const buf = new Uint8Array(input);
+  const dv = new DataView(buf.buffer);
+  const magic = latin1(buf, 0, 8);
+  if (magic !== 'CTENFDAM' && magic.indexOf('neteasecloudmusic') !== 0) {
+    throw new Error('不是有效的 NCM 文件');
+  }
+  let off = 10;
+
+  // --- 密钥 ---
+  const keyLen = dv.getUint32(off, true); off += 4;
+  const keyRaw = buf.slice(off, off + keyLen); off += keyLen;
+  for (let i = 0; i < keyRaw.length; i++) keyRaw[i] ^= 0x64;
+  const keyDec = aesEcbDecrypt(keyRaw, CORE_KEY);
+  const rc4Key = keyDec.subarray(17); // 前 17 字节固定是 "neteasecloudmusic"
+
+  // --- 元信息 ---
+  let meta = {};
+  const metaLen = dv.getUint32(off, true); off += 4;
+  if (metaLen > 0) {
+    const metaRaw = buf.slice(off, off + metaLen); off += metaLen;
+    for (let i = 0; i < metaRaw.length; i++) metaRaw[i] ^= 0x63;
+    try {
+      const b64 = latin1(metaRaw, META_PREFIX_LEN);
+      const bin = atob(b64.replace(/\s/g, ''));
+      const enc = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) enc[i] = bin.charCodeAt(i);
+      const plain = aesEcbDecrypt(enc, META_KEY);
+      let txt = new TextDecoder('utf-8').decode(plain);
+      // 去掉 "music:" 前缀
+      txt = txt.slice(txt.indexOf(':') + 1);
+      meta = JSON.parse(txt);
+    } catch (e) {
+      meta = {};
+    }
+  }
+
+  off += 4; // crc32
+  off += 5; // gap
+
+  // --- 封面 ---
+  let cover = null;
+  const imgLen = dv.getUint32(off, true); off += 4;
+  if (imgLen > 0 && imgLen <= buf.length - off) {
+    cover = buf.slice(off, off + imgLen);
+    off += imgLen;
+  }
+
+  // --- 音频 ---
+  const audio = buf.slice(off);
+  const box = buildKeyBox(rc4Key);
+  for (let i = 0; i < audio.length; i++) {
+    const j = (i + 1) & 0xff;
+    audio[i] ^= box[(box[j] + box[(box[j] + j) & 0xff]) & 0xff];
+  }
+
+  const fmt = sniffFormat(audio, meta.format);
+
+  // 规范化的字段
+  const artists = Array.isArray(meta.artist)
+    ? meta.artist.map(a => Array.isArray(a) ? a[0] : String(a)).filter(Boolean)
+    : (meta.artist ? [String(meta.artist)] : []);
+
+  return {
+    meta,
+    title: meta.musicName || meta.album || '未知歌曲',
+    artists,
+    album: meta.album || '',
+    bitrate: meta.bitrate || 0,
+    duration: meta.duration || 0,
+    cover,
+    audio,
+    ...fmt,
+  };
+}
+</script>
+
+<script id="lyric-core">
+/**
+ * LRC → SRT 转换
+ * 处理：多时间标签、毫秒/厘秒兼容、翻译合并、制作信息过滤
+ */
+
+const TIME_TAG = /\[(\d{1,3}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g;
+
+/** 解析 LRC 文本为 [{ ms, text }]，按时间升序 */
+function parseLrc(text) {
+  const out = [];
+  if (!text) return out;
+  for (const rawLine of String(text).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    TIME_TAG.lastIndex = 0;
+    const stamps = [];
+    let m;
+    while ((m = TIME_TAG.exec(line))) {
+      const min = Number(m[1]);
+      const sec = Number(m[2]);
+      // 毫秒段：3 位=毫秒，2 位=厘秒，1 位=分秒的十分位
+      const ms = m[3] ? Number(m[3].padEnd(3, '0')) : 0;
+      stamps.push((min * 60 + sec) * 1000 + ms);
+    }
+    if (!stamps.length) continue;
+    const content = line.replace(/\[[^\]]*\]/g, '').trim();
+    if (!content) continue;
+    for (const ms of stamps) out.push({ ms, text: content });
+  }
+  out.sort((a, b) => a.ms - b.ms);
+  return out;
+}
+
+/**
+ * 制作信息行。歌词末尾常见「小提琴 : 須磨和声」「录音工程 : xxx」这类署名，
+ * 只认词表、不按「短标签+冒号」泛化匹配——那样会误伤「他说：你好」这种歌词正文。
+ * 宁可漏掉几行署名，也不能删错歌词。
+ */
+const CREDIT = new RegExp(
+  '^\\s*(?:' +
+  [
+    // 创作
+    '作词', '作曲', '编曲', '制作人', '监制', '出品人', '出品', '发行', '词', '曲',
+    '音乐制作', '制作助理', '制作统筹', '企划', '统筹', '宣传', '文案',
+    // 后期
+    '混音', '母带', '录音', '录音工程', '混音工程', '母带工程', '录音室', '录音棚',
+    '后期', '人声', '人声编辑', '合音', '和音', '配唱', '和声',
+    // 演奏
+    '吉他', '贝斯', '鼓', '键盘', '弦乐', '管乐', '小提琴', '中提琴', '大提琴',
+    '钢琴', '长笛', '单簧管', '萨克斯', '小号', '长号', '打击乐',
+    '贝斯手', '吉他手', '鼓手', '键盘手',
+    // 视觉 / 版权
+    '视觉', '设计', '插画', '摄影', '美术', '造型', '化妆', '发型', '导演',
+    '翻译', '校对', '版权', '特别支持', '特别鸣谢', '鸣谢', '感谢',
+    // 英文
+    'Lyrics?', 'Composer', 'Arranger', 'Producer', 'Mixed', 'Mastered', 'Written', 'Music',
+    // 版权标识
+    'OP', 'SP',
+  ].join('|') +
+  ')\\s*[:：]',
+  'i'
+);
+
+function isCreditLine(text) {
+  if (text.length > 60) return false;
+  return CREDIT.test(text);
+}
+
+/** 毫秒 → 00:00:00,000 */
+function fmtSrtTime(ms) {
+  const t = Math.max(0, Math.round(ms));
+  const h = Math.floor(t / 3600000);
+  const m = Math.floor((t % 3600000) / 60000);
+  const s = Math.floor((t % 60000) / 1000);
+  const r = t % 1000;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(r).padStart(3, '0')}`;
+}
+
+/** 按时间把翻译对齐到原文行（容差 60ms） */
+function alignTranslation(main, trans, tolerance = 60) {
+  const map = new Map();
+  if (!trans.length) return map;
+  let j = 0;
+  for (const line of main) {
+    while (j + 1 < trans.length && Math.abs(trans[j + 1].ms - line.ms) <= Math.abs(trans[j].ms - line.ms)) j++;
+    if (Math.abs(trans[j].ms - line.ms) <= tolerance) map.set(line.ms, trans[j].text);
+  }
+  return map;
+}
+
+/**
+ * @param {string} lrcRaw      原文歌词
+ * @param {Object} opt
+ * @param {string} [opt.translation]  翻译歌词（tlyric）
+ * @param {boolean} [opt.stripCredits] 去掉「作词 : xxx」这类行
+ * @param {number} [opt.duration]     歌曲总时长（毫秒），用于判断片尾制作信息
+ * @returns {{ srt: string, lines: number }}
+ */
+function lrcToSrt(lrcRaw, opt = {}) {
+  const { translation = '', stripCredits = true, duration = 0 } = opt;
+
+  let main = parseLrc(lrcRaw);
+
+  // 合并时间完全相同的多行（同一句的多个标签）
+  const merged = [];
+  for (const line of main) {
+    const last = merged[merged.length - 1];
+    if (last && last.ms === line.ms) last.text += '\n' + line.text;
+    else merged.push({ ms: line.ms, text: line.text });
+  }
+  main = merged;
+
+  if (stripCredits) main = main.filter(l => !isCreditLine(l.text));
+
+  if (!main.length) return { srt: '', lines: 0 };
+
+  const trMap = translation ? alignTranslation(main, parseLrc(translation)) : new Map();
+
+  const blocks = [];
+  for (let i = 0; i < main.length; i++) {
+    const cur = main[i];
+    let end;
+    if (i + 1 < main.length) {
+      end = main[i + 1].ms;
+      if (end - cur.ms > 8000) end = cur.ms + 8000;   // 长间奏不要让字幕一直挂着
+    } else {
+      end = cur.ms + 4000;                            // 最后一句给 4 秒
+      if (duration && end > duration) end = duration;  // 但别超出歌曲长度
+    }
+    if (end <= cur.ms) end = cur.ms + 1200;            // 同一时刻挤压时兜底
+
+    let body = cur.text;
+    const tr = trMap.get(cur.ms);
+    if (tr && tr !== cur.text) body += '\n' + tr;
+
+    blocks.push(`${blocks.length + 1}\n${fmtSrtTime(cur.ms)} --> ${fmtSrtTime(end)}\n${body}`);
+  }
+
+  return { srt: blocks.join('\n\n') + '\n', lines: blocks.length };
+}
+</script>
+
+<script id="app">
+(function () {
+  'use strict';
+
+  var $ = function (s) { return document.querySelector(s); };
+  var tracks = [];          // { id, file, name, parsed, audioUrl, ext, mime, srt, srtLines, lrcText, coverUrl }
+  var seq = 0;
+
+  var CLOUD_URL = 'https://netease-mp3-srt.app.workbuddy.host/';
+  var SHARE_CODE = 'LYHA4P3PU6';
+
+  /* ---------- 小工具 ---------- */
+  function toast(msg) {
+    var el = $('#toast');
+    el.textContent = msg;
+    el.classList.add('on');
+    clearTimeout(el._t);
+    el._t = setTimeout(function () { el.classList.remove('on'); }, 2600);
+  }
+  function fmtSize(n) {
+    if (!n) return '0 KB';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+  function fmtTime(ms) {
+    var s = Math.round((ms || 0) / 1000);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function baseName(fn) { return fn.replace(/\.[^.]+$/, ''); }
+  function safeName(s) {
+    return String(s).replace(/[\\/:*?"<>|\u0000-\u001F]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 120) || 'track';
+  }
+  function downloadUrl(url, filename) {
+    var a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function downloadBlob(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    downloadUrl(url, filename);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+  }
+  function downloadText(text, filename) {
+    downloadBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), filename);
+  }
+  // 让出主线程，避免大批量解密时界面卡死
+  function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
+
+  /* ---------- 入口 ---------- */
+  $('#cloudLink').href = CLOUD_URL + '?sharecode=' + SHARE_CODE;
+  $('#cloudAddr').textContent = CLOUD_URL.replace(/\/$/, '');
+
+  $('#drop').addEventListener('click', function () { $('#picker').click(); });
+  $('#drop').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#picker').click(); }
+  });
+
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    $('#drop').addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      $('#drop').classList.add('over');
+    });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    $('#drop').addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      $('#drop').classList.remove('over');
+    });
+  });
+  $('#drop').addEventListener('drop', function (e) {
+    if (e.dataTransfer && e.dataTransfer.files) handleFiles(e.dataTransfer.files);
+  });
+  $('#picker').addEventListener('change', function () {
+    if ($('#picker').files.length) handleFiles($('#picker').files);
+    $('#picker').value = '';
+  });
+  // 拖到窗口别的地方不要触发浏览器打开文件
+  window.addEventListener('dragover', function (e) { e.preventDefault(); });
+  window.addEventListener('drop', function (e) { e.preventDefault(); });
+
+  /* ---------- 处理一批文件 ---------- */
+  function handleFiles(fileList) {
+    var all = Array.prototype.slice.call(fileList);
+    var ncms = all.filter(function (f) { return /\.ncm$/i.test(f.name); });
+    var lrcs = all.filter(function (f) { return /\.lrc$/i.test(f.name); });
+    if (!ncms.length) { toast('没看到 .ncm 文件'); return; }
+
+    // 同名 .lrc 先读进来，后面直接配给对应的歌
+    var lrcMap = {};
+    Promise.all(lrcs.map(function (f) {
+      return f.text().then(function (t) { lrcMap[baseName(f.name)] = t; }).catch(function () {});
+    })).then(function () { processAll(ncms, lrcMap); });
+  }
+
+  function processAll(files, lrcMap) {
+    $('#drop').classList.add('mini');
+    $('#drop').querySelector('.ttl').textContent = '继续拖入更多 .ncm';
+
+    files.reduce(function (chain, file) {
+      return chain.then(function () {
+        return addTrack(file, lrcMap[baseName(file.name)]);
+      });
+    }, Promise.resolve()).then(function () {
+      var ok = tracks.filter(function (t) { return t.parsed; }).length;
+      toast(ok === files.length ? ('处理完成 · ' + ok + ' 首') : ('完成 ' + ok + ' / ' + files.length));
+    });
+  }
+
+  function addTrack(file, presetLrc) {
+    var t = {
+      id: 't' + (++seq),
+      file: file,
+      name: baseName(file.name),
+      parsed: null,
+      audioBlob: null,
+      audioSize: 0,
+      audioUrl: '',
+      coverUrl: '',
+      srt: '',
+      srtLines: 0,
+      lrcText: presetLrc || '',
+      err: '',
+    };
+    tracks.push(t);
+    var card = renderCard(t, 'loading');
+    $('#list').appendChild(card);
+
+    return file.arrayBuffer()
+      .then(function (buf) {
+        // 解密是纯计算，放在下一帧再跑，让 loading 先画出来
+        return tick().then(function () {
+          var r;
+          try {
+            r = parseNcm(new Uint8Array(buf));
+          } catch (e) {
+            throw new Error(e && e.message ? e.message : '解析失败');
+          }
+          if (!r.audio || !r.audio.length) throw new Error('文件里没有解出音频数据');
+
+          t.parsed = r;
+          // Blob 会自己持有一份数据，随后就能放开解析结果里的原始数组引用
+          var blob = new Blob([r.audio], { type: r.mime });
+          t.audioBlob = blob;
+          t.audioSize = r.audio.length;
+          t.audioUrl = URL.createObjectURL(blob);
+          if (r.cover && r.cover.length) {
+            t.coverUrl = URL.createObjectURL(new Blob([r.cover]));
+          }
+          r.audio = null;
+          r.cover = null;
+          if (t.lrcText) applyLrc(t);
+
+          var old = document.getElementById('card-' + t.id);
+          var fresh = renderCard(t, 'done');
+          if (old) old.replaceWith(fresh); else $('#list').appendChild(fresh);
+        });
+      })
+      .catch(function (e) {
+        t.err = e && e.message ? e.message : String(e);
+        var old = document.getElementById('card-' + t.id);
+        var fresh = renderCard(t, 'error');
+        if (old) old.replaceWith(fresh); else $('#list').appendChild(fresh);
+      });
+  }
+
+  /* ---------- 卡片 ---------- */
+  function renderCard(t, state) {
+    var card = el('div', 'card');
+    card.id = 'card-' + t.id;
+
+    /* 头部：封面 + 标题 */
+    var line = el('div', 'song');
+    var cover = el('div', 'cover', '♪');
+    if (t.coverUrl) {
+      var img = new Image();
+      img.alt = '';
+      img.onload = function () { cover.textContent = ''; cover.appendChild(img); };
+      img.src = t.coverUrl;
+    }
+    line.appendChild(cover);
+
+    var meta = el('div', 'meta');
+    var h2 = el('h2');
+    h2.appendChild(el('span', 'name', state === 'loading' ? t.name : (t.parsed ? t.parsed.title : t.name)));
+    if (state === 'done') {
+      h2.appendChild(el('span', 'tag hi', (t.parsed.ext || 'mp3').toUpperCase()));
+    } else if (state === 'error') {
+      h2.appendChild(el('span', 'tag', '失败'));
+    }
+    meta.appendChild(h2);
+
+    if (state === 'loading') {
+      meta.appendChild(el('p', 'by', '正在解密…'));
+      meta.appendChild(el('p', 'specs', fmtSize(t.file.size) + ' · ' + t.file.name));
+    } else if (state === 'error') {
+      meta.appendChild(el('p', 'by', t.file.name));
+    } else {
+      var p = t.parsed;
+      meta.appendChild(el('p', 'by',
+        (p.artists.length ? p.artists.join(' / ') : '未知歌手') + (p.album && p.album !== p.title ? ' · ' + p.album : '')));
+      var specs = [];
+      if (p.bitrate) specs.push(Math.round(p.bitrate / 1000) + ' kbps');
+      if (p.duration) specs.push(fmtTime(p.duration));
+      specs.push(fmtSize(t.audioSize));
+      var mid = p.meta && p.meta.musicId;
+      if (mid) specs.push('ID ' + mid);
+      meta.appendChild(el('p', 'specs', specs.join('  ·  ')));
+    }
+
+    line.appendChild(meta);
+    card.appendChild(line);
+
+    if (state === 'error') {
+      card.appendChild(el('div', 'err', '这个文件没能解开：' + t.err + '。确认它是不是网易云完整下载的 .ncm（未下载完的文件会缺尾部数据）。'));
+      var del = el('div', 'acts');
+      var rm = el('button', 'btn', '移除');
+      rm.addEventListener('click', function () { removeTrack(t); });
+      del.appendChild(rm);
+      card.appendChild(del);
+      return card;
+    }
+
+    if (state !== 'done') return card;
+
+    /* 播放 + 保存 */
+    var audio = el('audio');
+    audio.controls = true;
+    audio.preload = 'none';
+    audio.src = t.audioUrl;
+    card.appendChild(audio);
+
+    var acts = el('div', 'acts');
+    var saveAudio = el('button', 'btn pri', '保存 ' + (t.parsed.ext || 'mp3').toUpperCase());
+    saveAudio.addEventListener('click', function () {
+      var fn = audioFileName(t);
+      downloadUrl(t.audioUrl, fn);
+      toast('已保存 ' + fn);
+    });
+    acts.appendChild(saveAudio);
+
+    if (t.srt) {
+      var saveSrt = el('button', 'btn ok', '保存 SRT');
+      saveSrt.addEventListener('click', function () {
+        var fn = srtFileName(t);
+        downloadText(t.srt, fn);
+        toast('已保存 ' + fn + ' · ' + t.srtLines + ' 行');
+      });
+      acts.appendChild(saveSrt);
+    }
+
+    var lyrBtn = el('button', 'btn', t.srt ? '改歌词' : '补歌词');
+    lyrBtn.addEventListener('click', function () {
+      var panel = card.querySelector('.lyric-panel');
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) {
+        var ta = panel.querySelector('textarea');
+        ta.focus();
+        ta.scrollTop = 0;
+      }
+    });
+    acts.appendChild(lyrBtn);
+
+    var rm2 = el('button', 'btn', '移除');
+    rm2.addEventListener('click', function () { removeTrack(t); });
+    acts.appendChild(rm2);
+
+    card.appendChild(acts);
+
+    /* 歌词面板块 */
+    card.appendChild(buildLyricPanel(t, card));
+
+    return card;
+  }
+
+  function audioFileName(t) {
+    var p = t.parsed;
+    var who = p.artists.length ? p.artists.join(',') : '未知歌手';
+    return safeName(who + ' - ' + p.title) + '.' + (p.ext || 'mp3');
+  }
+  function srtFileName(t) {
+    return audioFileName(t).replace(/\.[^.]+$/, '') + '.srt';
+  }
+
+  function buildLyricPanel(t, card) {
+    var panel = el('div', 'lyric-panel');
+    panel.hidden = true;   // 默认收起，点「补歌词 / 改歌词」展开
+
+    var head = el('p', 'lp-head');
+    head.innerHTML = '这首歌的歌词：把 <b>.lrc</b> 内容粘进来（或选文件），就能转成 SRT 字幕。';
+    panel.appendChild(head);
+
+    var ta = el('textarea');
+    ta.placeholder = '[00:12.34]第一句歌词\n[00:16.10]第二句歌词\n（每行以 [分:秒.厘秒] 开头）';
+    ta.spellcheck = false;
+    ta.value = t.lrcText || '';
+    panel.appendChild(ta);
+
+    var acts = el('div', 'lp-acts');
+    var mk = el('button', 'btn pri', '生成 SRT');
+    var pick = el('button', 'btn', '选 .lrc 文件');
+    var note = el('p', 'lp-note');
+    var fileInput = el('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.lrc,.txt';
+    fileInput.hidden = true;
+
+    pick.addEventListener('click', function () { fileInput.click(); });
+    fileInput.addEventListener('change', function () {
+      var f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      f.text().then(function (txt) {
+        ta.value = txt;
+        t.lrcText = txt;
+        mk.click();
+      });
+      fileInput.value = '';
+    });
+
+    mk.addEventListener('click', function () {
+      var txt = ta.value.trim();
+      if (!txt) { note.className = 'lp-note bad'; note.textContent = '先把歌词粘进来'; return; }
+      t.lrcText = txt;
+      var ok = applyLrc(t);
+      if (!ok) {
+        note.className = 'lp-note bad';
+        note.textContent = '没解析出时间标签，确认复制的是 LRC 格式（每行以 [mm:ss.xx] 开头）';
+        return;
+      }
+      note.className = 'lp-note good';
+      note.textContent = '已生成 ' + t.srtLines + ' 行字幕';
+      // 重绘这张卡，让「保存 SRT」出现
+      var fresh = renderCard(t, 'done');
+      fresh.querySelector('.lyric-panel').hidden = false;
+      card.replaceWith(fresh);
+      toast('SRT 已生成 · ' + t.srtLines + ' 行');
+    });
+
+    acts.appendChild(mk);
+    acts.appendChild(pick);
+    acts.appendChild(note);
+    panel.appendChild(acts);
+    panel.appendChild(fileInput);
+
+    if (t.srt) {
+      var prev = el('div', 'srt-preview');
+      prev.textContent = t.srt.split('\n').slice(0, 24).join('\n');
+      panel.appendChild(prev);
+      panel.hidden = true;
+    }
+
+    return panel;
+  }
+
+  /** 把 t.lrcText 转成 SRT，成功返回 true */
+  function applyLrc(t) {
+    var dur = (t.parsed && t.parsed.duration) || 0;
+    var r = lrcToSrt(t.lrcText, { stripCredits: true, translation: '', duration: dur });
+    if (!r || !r.lines) return false;
+    t.srt = r.srt;
+    t.srtLines = r.lines;
+    return true;
+  }
+
+  function removeTrack(t) {
+    var i = tracks.indexOf(t);
+    if (i >= 0) tracks.splice(i, 1);
+    if (t.audioUrl) URL.revokeObjectURL(t.audioUrl);
+    if (t.coverUrl) URL.revokeObjectURL(t.coverUrl);
+    var card = document.getElementById('card-' + t.id);
+    if (card) card.remove();
+    if (!tracks.length) {
+      $('#drop').classList.remove('mini');
+      $('#drop').querySelector('.ttl').textContent = '把 .ncm 文件拖到这里';
+    }
+  }
+})();
+</script>
+</body>
+</html>
